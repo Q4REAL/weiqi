@@ -1,3 +1,25 @@
+//! # Weiqi-rs
+//! Go (also known as weiqi in china or baduk in korea) is a turn based tactical board game played on a 19x19, 13x13, or 9x9 board. It is played by placing stones on the board to surround and capture the opponent's stones and surround the most territory. This crate is a rules engine for Go.
+//! 
+//! ## Features
+//! - Board State Management
+//! - Capturing
+//! - General Illegal Move Detection
+//! ## Usage
+//! ```Rust
+//! use weiqi::{JBoard, Board, Color, GoError};
+//!
+//! // create a 19x19 board in the japanese rules
+//! if let Ok(mut board) = JBoard::init(19) {
+//!     let mut turn = Color::Black;
+//!     // play a black stone at 3, 3 (one indexed)
+//!     match board.try_move(turn, (3, 3)) {
+//!         Ok(t) => turn = t,
+//!         Err(e) => println!("Illegal move of type: {:?}", e),
+//!     }
+//! }
+//! ```
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +136,7 @@ mod tests {
     }
 }
 
+/// Used to represent the color of a stone or which player's turn it is
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Color {
     Black,
@@ -121,27 +144,33 @@ pub enum Color {
 }
 
 // a different board structure is used for all the rulesets (AGA, Japanese, and Chinese) so that their trait implementations to be unique
+/// A version of Board that implements the Japanese Rules
 pub struct JBoard {
-    size: usize,
-    stones: Vec<Option<Color>>,
-    white_captures: usize,
-    black_captures: usize,
-    turn: Color,
+    pub size: usize,
+    pub stones: Vec<Option<Color>>,
+    pub white_captures: usize,
+    pub black_captures: usize,
 }
 
+/// Represents all the API-level errors weiqi can throw.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum GoError {
     // thrown at init
+    /// Thrown when the board size given to init is not 9x9, 13x13, or 19x19
     InvalidBoardSize,
     // thrown at try_move
+    /// Thrown when a requested move would result in Self Capture
     SelfCapture,
     // thrown at try_move
+    /// Thrown when a requested move would result in Overlapping Stones
     OverlappingStones,
     // thrown at try_move
+    /// Thrown when a requested move is outside the board boundries
     OutOfBoard,
     // thrown at build_cluster
     NoStoneFound,
     // thrown at score
+    /// Thrown during scoring when a given board state is impossible
     IllegalBoard,
 }
 
@@ -388,15 +417,17 @@ fn build_cluster(stones: &Vec<Option<Color>>, space: (usize, usize), size: usize
     }
 }
 
+/// Base trait for all rulesets to inherent
 pub trait Board: Sized {
     fn check_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError>;
     fn init(size: usize) -> Result<Self, GoError>;
-    fn try_move(&mut self, color: Color, space: (usize, usize)) -> Result<Color, GoError>;
+    fn try_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError>;
     // fn score(&self) -> Result<(f32, f32), GoError>;
 }
 
 
 impl Board for JBoard {
+    /// Builds a blank JBoard
     fn init(size: usize) -> Result<Self, GoError> {
         if size != 9 && size != 13 && size != 19 {
             Err(GoError::InvalidBoardSize)
@@ -412,10 +443,10 @@ impl Board for JBoard {
                 stones: stones,
                 white_captures: 0,
                 black_captures: 0,
-                turn: Color::Black,
             })
         }   
     }
+    /// Checks if a move is legal, but does not execute the move
     fn check_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError> {
         let mut cs: Vec<(usize, usize)> = Vec::new();
         if !space.0 == 0 || !space.1 == 0 {
@@ -503,7 +534,8 @@ impl Board for JBoard {
         Ok(())
     }
 
-    fn try_move(&mut self, color: Color, space: (usize, usize)) -> Result<Color, GoError> {
+    /// executes a move, and undoes if if its illegal
+    fn try_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError> {
         if !space.0 == 0 || !space.1 == 0 {
             let space = (space.0 - 1, space.1 - 1);
             if space.0 < self.size && space.1 < self.size {
@@ -513,18 +545,34 @@ impl Board for JBoard {
                     let cc = check_capture(&self.stones, space, self.size, color);
                     match cc {
                         Ok(cs) => {
-                            for spot in cs {
+                            for spot in &cs {
                                 self.stones[spot.0 + spot.1 * self.size] = None;
+                                if color == Color::Black {
+                                    self.black_captures += 1
+                                } else {
+                                    self.white_captures += 1
+                                }
                             }
                             if is_self_capture(&mut self.stones, space, self.size, color) {
+                                if color == Color::Black {
+                                    for spot in &cs {
+                                        self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                                        self.white_captures -= 1
+                                    }
+                                } else {
+                                    for spot in &cs {
+                                        self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                                        self.black_captures -= 1
+                                    }
+                                }
                                 return Err(GoError::SelfCapture)
                             } else {
                                 if color == Color::Black {
                                     self.stones[space.0 + space.1 * self.size] = Some(color);
-                                    return Ok(Color::White)
+                                    Ok(())
                                 } else {
                                     self.stones[space.0 + space.1 * self.size] = Some(color);
-                                    return Ok(Color::Black)
+                                    Ok(())
                                 }
                             }
                         }
