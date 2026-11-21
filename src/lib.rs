@@ -5,26 +5,24 @@ mod tests {
     #[test]
     fn check_cluster() {
         // checks right -> left -> up -> down
-        // 0,0 - - - +
-        //  |
-        //  |
-        //  +
         /*
-        [ ][B][ ]
-        [ ][B][ ]
-        [W][W][W]
+           0  1  2
+        0 [ ][B][ ]
+        1 [ ][B][ ]
+        2 [W][W][W]
          */
         let stones: Vec<Option<Color>> = Vec::from([
             None,               Some(Color::Black), None,
             None,               Some(Color::Black), None,
             Some(Color::White), Some(Color::White), Some(Color::White)
         ]);
-        assert_eq!(Ok((Color::Black, Vec::from([(1, 1), (1, 0)]))), build_cluster(&stones, (1, 1), 3));
+        assert_eq!(Ok((Color::Black, Vec::from([(1, 1), (1, 0)]), Vec::from([(2, 1), (0, 1), (1, 2), (2, 0), (0, 0)]))), build_cluster(&stones, (1, 1), 3));
         /*
-        [ ][B][B][B]
-        [ ][B][ ][B]
-        [W][W][B][B]
-        [W][W][B][B]
+           0  1  2  3
+        0 [ ][B][B][B]
+        1 [ ][B][ ][B]
+        2 [W][W][B][B]
+        3 [W][W][B][B]
          */
         let stones: Vec<Option<Color>> = Vec::from([
             None,               Some(Color::Black), Some(Color::Black), Some(Color::Black),
@@ -32,12 +30,20 @@ mod tests {
             Some(Color::White), Some(Color::White), Some(Color::Black), Some(Color::Black),
             Some(Color::White), Some(Color::White), Some(Color::Black), Some(Color::Black),
         ]);
-        assert_eq!(Ok((Color::Black, Vec::from([(1, 1), (1,0),(2,0),(3,0),(3, 1),(3, 2),(2,2),(3,3), (2,3)]))), build_cluster(&stones, (1, 1), 4));
-    }
+        assert_eq!(Ok((Color::Black, Vec::from([(1, 1), (1,0),(2,0),(3,0),(3, 1),(3, 2),(2,2),(3,3), (2,3)]), Vec::from([(2, 1), (0, 1), (1, 2), (0, 0), (1, 3)]))), build_cluster(&stones, (1, 1), 4));
 
-    #[test]
-    fn check_node() {
-
+        /*
+           0  1  2
+        0 [ ][B][ ]
+        1 [B][B][B]
+        2 [ ][B][ ]
+         */
+        let stones: Vec<Option<Color>> = Vec::from([
+            None,               Some(Color::Black), None,
+            Some(Color::Black), Some(Color::Black), Some(Color::Black),
+            None,               Some(Color::Black), None,
+        ]);
+        assert_eq!(Ok((Color::Black, Vec::from([(2, 1), (1, 1), (0, 1), (1, 0), (1, 2)]), Vec::from([(2, 0), (2, 2), (0, 0), (0, 2)]))), build_cluster(&stones, (2, 1), 3));
     }
 }
 
@@ -47,7 +53,7 @@ pub enum Color {
     White
 }
 
-// a different board structure is used for all the rulesets (AGA, Japanese, and Chinese)
+// a different board structure is used for all the rulesets (AGA, Japanese, and Chinese) so that their trait implementations to be unique
 pub struct JBoard {
     size: usize,
     stones: Vec<Option<Color>>,
@@ -65,12 +71,20 @@ pub enum GoError {
     NoStoneFound,
 }
 
-/* 
 
-fn check_for_overlap() -> bool {
 
+fn check_for_overlap(stones: &Vec<Option<Color>>, place: (usize, usize), size: usize) -> bool {
+    if stones[place.0 + place.1 * size].is_none() {
+        false
+    } else {
+        true
+    }
 }
 
+/*
+// self capture is tested by playing the stone, building the cluster, checking if the 
+// cluster has no liberties becuase of that move, and reversing it if it doesn't.
+// its is important to check and evalutate captures before self-capture is checked
 fn is_self_capture() -> bool {
 
 }
@@ -80,7 +94,7 @@ fn is_capturing() -> bool {
 }
 */
 
-// asumes the nodes being checked is already in the set
+// assumes the nodes being checked is already in the set
 // eval liberties checks for nones and the oposite color of the cluster
 fn check_node(
     stones: &Vec<Option<Color>>, 
@@ -88,82 +102,98 @@ fn check_node(
     color: Color, space: (usize, usize), 
     size: usize, 
     eval_liberties: bool
-) -> usize {
+) -> (usize, bool) {
     let mut count = 0;
+    let mut border = 0;
     // to the right
     if space.0 < size - 1{
         if !set.contains(&(space.0 + 1, space.1)) {
-                let checking_node = stones[(space.0 + 1) + space.1 * size];
-                if !eval_liberties {
-                    if checking_node == Some(color) {
-                        println!("2");
-                        set.push((space.0 + 1, space.1));
-                        count += 1;
-                    }
-                } else {
-                    if checking_node.is_none() || checking_node.unwrap() != color {
-                        set.push((space.0 + 1, space.1));
-                        count += 1;
-                    }
+            let checking_node = stones[(space.0 + 1) + space.1 * size];
+            if !eval_liberties {
+                if checking_node == Some(color) {
+                    border += 1;
+                    set.push((space.0 + 1, space.1));
+                    count += 1;
                 }
+            } else {
+                if checking_node.is_none() || checking_node.unwrap() != color {
+                    set.push((space.0 + 1, space.1));
+                    count += 1;
+                }
+            }
+        } else {
+            border += 1;
         }
     }
     // to the left
     if space.0 > 0 {
         if !set.contains(&(space.0 - 1, space.1)) {
-                let checking_node = stones[(space.0 - 1) + space.1 * size];
-                if !eval_liberties {
-                    if checking_node == Some(color) {
-                        set.push((space.0 - 1, space.1));
-                        count += 1;
-                    }
-                } else {
-                    if checking_node.is_none() || checking_node.unwrap() != color {
-                        set.push((space.0 - 1, space.1));
-                        count += 1;
-                    }
+            let checking_node = stones[(space.0 - 1) + space.1 * size];
+            if !eval_liberties {
+                if checking_node == Some(color) {
+                    border += 1;
+                    set.push((space.0 - 1, space.1));
+                    count += 1;
                 }
+            } else {
+                if checking_node.is_none() || checking_node.unwrap() != color {
+                    set.push((space.0 - 1, space.1));
+                    count += 1;
+                }
+            }
+        } else {
+            border += 1;
         }
     }
     // up
-    if space.1 < size - 1 {
-        if !set.contains(&(space.0 , space.1 + 1)) {
-                let checking_node = stones[space.0 + (space.1 + 1) * size];
-                if !eval_liberties {
-                    if checking_node == Some(color) {
-                        set.push((space.0, space.1 + 1));
-                        count += 1;
-                    }
-                } else {
-                    if checking_node.is_none() || checking_node.unwrap() != color {
-                        set.push((space.0, space.1 + 1));
-                        count += 1;
-                    }
+    if space.1 > 0 {
+        if !set.contains(&(space.0 , space.1 - 1)) {
+            let checking_node = stones[space.0 + (space.1 - 1) * size];
+            if !eval_liberties {
+                if checking_node == Some(color) {
+                    border += 1;
+                    set.push((space.0, space.1 - 1));
+                    count += 1;
                 }
+            } else {
+                if checking_node.is_none() || checking_node.unwrap() != color {
+                    set.push((space.0, space.1 - 1));
+                    count += 1;
+                }
+            }
+        } else {
+            border += 1;
         }
     }
     // down
-    if space.1 > 0 {
-        if !set.contains(&(space.0 , space.1 - 1)) {
-                let checking_node = stones[space.0 + (space.1 - 1) * size];
-                if !eval_liberties {
-                    if checking_node == Some(color) {
-                        println!("{:?}", checking_node);
-                        set.push((space.0, space.1 - 1));
-                        count += 1;
-                    }
-                } else {
-                    if checking_node.is_none() || checking_node.unwrap() != color {
-                        set.push((space.0, space.1 - 1));
-                        count += 1;
-                    }
+    if space.1 < size - 1 {
+        if !set.contains(&(space.0 , space.1 + 1)) {
+            let checking_node = stones[space.0 + (space.1 + 1) * size];
+            if !eval_liberties {
+                if checking_node == Some(color) {
+                    border += 1;
+                    set.push((space.0, space.1 + 1));
+                    count += 1;
                 }
+            } else {
+                if checking_node.is_none() || checking_node.unwrap() != color {
+                    set.push((space.0, space.1 + 1));
+                    count += 1;
+                }
+            }
+        } else {
+            border += 1;
         }
     }
-    count
+    if border < 4 {
+        (count, true)
+    } else {
+        (count, false)
+    }
+    
 }
 
-fn build_cluster(stones: &Vec<Option<Color>>, space: (usize, usize), size: usize) -> Result<(Color, Vec<(usize, usize)>), GoError> {
+fn build_cluster(stones: &Vec<Option<Color>>, space: (usize, usize), size: usize) -> Result<(Color, Vec<(usize, usize)>, Vec<(usize, usize)>), GoError> {
     if !stones[space.0 + space.1 * size].is_none() {
         // cluster stones is the entire blob
         // edge is the nodes we are checking this turn
@@ -172,25 +202,37 @@ fn build_cluster(stones: &Vec<Option<Color>>, space: (usize, usize), size: usize
         // we loop over the edge, but pass the entire blob to check because it needs to never visit twice
         let color = stones[space.0 + space.1 * size].unwrap();
         let mut cluster_stones: Vec<(usize, usize)> = Vec::new();
-        let mut last_visited: usize = 0;
+        let mut last_visited: usize;
+        let mut border_stones: Vec<(usize, usize)> = Vec::new();
+        let mut liberties: Vec<(usize, usize)> = Vec::new();
         let mut edge: Vec<(usize, usize)> = Vec::new();
         cluster_stones.push(space);
-        last_visited = check_node(stones, &mut cluster_stones, color, space, size, false);
+        let (lv, b) = check_node(stones, &mut cluster_stones, color, space, size, false);
+        last_visited = lv;
+        if b {
+            border_stones.push(space)
+        }
         for i in 0..last_visited {
             edge.push(cluster_stones[cluster_stones.len() - 1 - i]);
         }
         while last_visited > 0 {
             last_visited = 0;
-            for node in edge {
-                last_visited += check_node(stones, &mut cluster_stones, color, node, size, false);
+            for node in edge.into_iter().rev() {
+                let (lv, b) = check_node(stones, &mut cluster_stones, color, node, size, false);
+                last_visited += lv;
+                if b {
+                    border_stones.push(node)
+                }
             }
             edge = Vec::new();
             for i in 0..last_visited {
                 edge.push(cluster_stones[cluster_stones.len() - 1 - i]);
             }
         }
-
-        Ok((color, cluster_stones))
+        for stone in border_stones {
+            check_node(stones, &mut liberties, color, stone, size, true);
+        }
+        Ok((color, cluster_stones, liberties))
     } else {
         Err(GoError::NoStoneFound)
     }
