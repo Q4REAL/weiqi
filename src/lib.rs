@@ -71,13 +71,31 @@ mod tests {
         */
 
         let stones: Vec<Option<Color>> = Vec::from([
-            None, Some(Color::Black), Some(Color::Black), Some(Color::Black), None,
-            Some(Color::Black),Some(Color::Black),Some(Color::White),Some(Color::Black),Some(Color::Black),
-            Some(Color::Black),Some(Color::White),None,Some(Color::White),Some(Color::Black),
-            Some(Color::Black),Some(Color::Black),Some(Color::White),Some(Color::Black),Some(Color::Black),
-            None, Some(Color::Black), Some(Color::Black), Some(Color::Black), None,
+            None,              Some(Color::Black), Some(Color::Black), Some(Color::Black), None,
+            Some(Color::Black),Some(Color::Black), Some(Color::White), Some(Color::Black), Some(Color::Black),
+            Some(Color::Black),Some(Color::White), None,               Some(Color::White), Some(Color::Black),
+            Some(Color::Black),Some(Color::Black), Some(Color::White), Some(Color::Black), Some(Color::Black),
+            None,              Some(Color::Black), Some(Color::Black), Some(Color::Black), None,
         ]);
         assert_eq!(Ok(Vec::from([(3, 2), (1, 2), (2, 1), (2, 3)])), check_capture(&stones, (2, 2), 5, Color::Black));
+        
+        /*
+           0  1  2  3  4 
+        0 [ ][B][B][B][ ]
+        1 [B][W][W][B][B]
+        2 [B][W][ ][W][B]
+        3 [B][B][W][W][B]
+        4 [ ][B][B][B][ ]
+        */
+
+        let stones: Vec<Option<Color>> = Vec::from([
+            None,              Some(Color::Black), Some(Color::Black), Some(Color::Black), None,
+            Some(Color::Black),Some(Color::White), Some(Color::White), Some(Color::Black), Some(Color::Black),
+            Some(Color::Black),Some(Color::White), None,               Some(Color::White), Some(Color::Black),
+            Some(Color::Black),Some(Color::Black), Some(Color::White), Some(Color::White), Some(Color::Black),
+            None,              Some(Color::Black), Some(Color::Black), Some(Color::Black), None,
+        ]);
+        assert_eq!(Ok(Vec::from([(3, 2), (3, 3), (2, 3), (1, 2), (1, 1), (2, 1)])), check_capture(&stones, (2, 2), 5, Color::Black));
     }
 }
 
@@ -142,7 +160,11 @@ fn check_capture(stones: &Vec<Option<Color>>, space: (usize, usize), size: usize
                     }
                 }
                 if total_l - 1 == 0 {
-                    captured_stones.append(&mut cluster);
+                    for stone in &cluster {
+                        if !captured_stones.contains(stone) {
+                            captured_stones.push(*stone)
+                        }
+                    }
                 }
             }
             Err(e) => {tripped = true; er = Some(e); break}
