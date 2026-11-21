@@ -97,6 +97,21 @@ mod tests {
         ]);
         assert_eq!(Ok(Vec::from([(3, 2), (3, 3), (2, 3), (1, 2), (1, 1), (2, 1)])), check_capture(&stones, (2, 2), 5, Color::Black));
     }
+    #[test]
+    fn self_capture_test() {
+        /*
+           0  1  2
+        0 [ ][W][ ]
+        1 [W][ ][W]
+        2 [ ][W][ ] 
+         */
+        let mut stones: Vec<Option<Color>> = Vec::from([
+            None,               Some(Color::White), None, 
+            Some(Color::White), None,               Some(Color::White),
+            None,               Some(Color::White), None, 
+        ]);
+        assert_eq!(true, is_self_capture(&mut stones, (1, 1), 3, Color::Black))
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -116,12 +131,18 @@ pub struct JBoard {
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum GoError {
+    // thrown at init
     InvalidBoardSize,
+    // thrown at try_move
     SelfCapture,
+    // thrown at try_move
     OverlappingStones,
+    // thrown at try_move
     OutOfBoard,
+    // thrown at build_cluster
     NoStoneFound,
-    IllegalBoard
+    // thrown at score
+    IllegalBoard,
 }
 
 
@@ -136,9 +157,28 @@ fn is_overlaping(stones: &Vec<Option<Color>>, place: (usize, usize), size: usize
 
 
 // its is important to check and evalutate captures before self-capture is checked
-//fn is_self_capture() -> bool {
-//
-//}
+fn is_self_capture(stones: &mut Vec<Option<Color>>, space: (usize, usize), size: usize, color: Color) -> bool {
+    let prev = stones[space.0 + space.1 * size];
+    stones[space.0 + space.1 * size] = Some(color);
+    if let Ok((_, _, liberties)) = build_cluster(stones, space, size) {
+        let mut count = liberties.len();
+        for lib in liberties {
+            if stones[lib.0 * lib.1 * size] != Some(color) {
+                count -= 1;
+            }
+        }
+        if count == 0 {
+            stones[space.0 + space.1 * size] = prev;
+            true
+        } else {
+            stones[space.0 + space.1 * size] = prev;
+            false
+        }
+    } else {
+        stones[space.0 + space.1 * size] = prev;
+        false
+    }
+}
 
 
 // input takes the move that could capture, not what is being captured
@@ -152,14 +192,15 @@ fn check_capture(stones: &Vec<Option<Color>>, space: (usize, usize), size: usize
     for node in adjacent_nodes {
         let r = build_cluster(stones, node, size);
         match r {
-            Ok((_, mut cluster, liberties)) => {
-                let mut total_l = liberties.len();
+            Ok((_, cluster, liberties)) => {
+                // - 1 becuase the stone that captures is not simulated to be placed yet
+                let mut total_l = liberties.len() - 1;
                 for l in liberties {
                     if !stones[l.0 + l.1 * size].is_none() {
                         total_l -= 1;
                     }
                 }
-                if total_l - 1 == 0 {
+                if total_l == 0 {
                     for stone in &cluster {
                         if !captured_stones.contains(stone) {
                             captured_stones.push(*stone)
@@ -299,66 +340,70 @@ fn check_node(
 }
 
 fn build_cluster(stones: &Vec<Option<Color>>, space: (usize, usize), size: usize) -> Result<(Color, Vec<(usize, usize)>, Vec<(usize, usize)>), GoError> {
-    if !stones[space.0 + space.1 * size].is_none() {
-        // cluster stones is the entire blob
-        // edge is the nodes we are checking this turn
-        // last_visited is the number of nodes in the edge
+    if space.0 <= size || space.1 <= size {    
+        if !stones[space.0 + space.1 * size].is_none() {
+            // cluster stones is the entire blob
+            // edge is the nodes we are checking this turn
+            // last_visited is the number of nodes in the edge
 
-        // we loop over the edge, but pass the entire blob to check because it needs to never visit twice
-        let color = stones[space.0 + space.1 * size].unwrap();
-        let mut cluster_stones: Vec<(usize, usize)> = Vec::new();
-        let mut last_visited: usize;
-        let mut border_stones: Vec<(usize, usize)> = Vec::new();
-        let mut liberties: Vec<(usize, usize)> = Vec::new();
-        let mut edge: Vec<(usize, usize)> = Vec::new();
-        cluster_stones.push(space);
-        let (lv, b) = check_node(stones, &mut cluster_stones, color, space, size, NodeMode::Cluster);
-        last_visited = lv;
-        if b {
-            border_stones.push(space)
-        }
-        for i in 0..last_visited {
-            edge.push(cluster_stones[cluster_stones.len() - 1 - i]);
-        }
-        while last_visited > 0 {
-            last_visited = 0;
-            for node in edge.into_iter().rev() {
-                let (lv, b) = check_node(stones, &mut cluster_stones, color, node, size, NodeMode::Cluster);
-                last_visited += lv;
-                if b {
-                    border_stones.push(node)
-                }
+            // we loop over the edge, but pass the entire blob to check because it needs to never visit twice
+            let color = stones[space.0 + space.1 * size].unwrap();
+            let mut cluster_stones: Vec<(usize, usize)> = Vec::new();
+            let mut last_visited: usize;
+            let mut border_stones: Vec<(usize, usize)> = Vec::new();
+            let mut liberties: Vec<(usize, usize)> = Vec::new();
+            let mut edge: Vec<(usize, usize)> = Vec::new();
+            cluster_stones.push(space);
+            let (lv, b) = check_node(stones, &mut cluster_stones, color, space, size, NodeMode::Cluster);
+            last_visited = lv;
+            if b {
+                border_stones.push(space)
             }
-            edge = Vec::new();
             for i in 0..last_visited {
                 edge.push(cluster_stones[cluster_stones.len() - 1 - i]);
             }
+            while last_visited > 0 {
+                last_visited = 0;
+                for node in edge.into_iter().rev() {
+                    let (lv, b) = check_node(stones, &mut cluster_stones, color, node, size, NodeMode::Cluster);
+                    last_visited += lv;
+                    if b {
+                        border_stones.push(node)
+                    }
+                }
+                edge = Vec::new();
+                for i in 0..last_visited {
+                    edge.push(cluster_stones[cluster_stones.len() - 1 - i]);
+                }
+            }
+            for stone in border_stones {
+                check_node(stones, &mut liberties, color, stone, size, NodeMode::Liberty);
+            }
+            Ok((color, cluster_stones, liberties))
+        } else {
+            Err(GoError::NoStoneFound)
         }
-        for stone in border_stones {
-            check_node(stones, &mut liberties, color, stone, size, NodeMode::Liberty);
-        }
-        Ok((color, cluster_stones, liberties))
     } else {
-        Err(GoError::NoStoneFound)
+        Err(GoError::OutOfBoard)
     }
 }
 
 pub trait Board: Sized {
-    fn check_move(&self, color: Color, space: (usize, usize)) -> Result<(), GoError>;
+    fn check_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError>;
     fn init(size: usize) -> Result<Self, GoError>;
-    fn try_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError>;
-    fn score(&self) -> Result<(f32, f32), GoError>;
+    fn try_move(&mut self, color: Color, space: (usize, usize)) -> Result<Color, GoError>;
+    // fn score(&self) -> Result<(f32, f32), GoError>;
 }
 
-/* 
+
 impl Board for JBoard {
     fn init(size: usize) -> Result<Self, GoError> {
         if size != 9 && size != 13 && size != 19 {
             Err(GoError::InvalidBoardSize)
         } else {
             let mut stones: Vec<Option<Color>> = Vec::with_capacity(size * size);
-            for y in 0..size {
-                for x in 0..size {
+            for _ in 0..size {
+                for _ in 0..size {
                     stones.push(None)
                 }
             }
@@ -371,15 +416,126 @@ impl Board for JBoard {
             })
         }   
     }
-    fn check_move(&self, color: Color, space: (usize, usize)) -> bool {
-        let flagged = false;
-        if is_overlaping(self.stones, space, self.size) {
-            
+    fn check_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError> {
+        let mut cs: Vec<(usize, usize)> = Vec::new();
+        if !space.0 == 0 || !space.1 == 0 {
+            let space = (space.0 - 1, space.1 - 1);
+            if space.0 < self.size && space.1 < self.size {
+                if is_overlaping(&self.stones, space, self.size) {
+                    if color == Color::Black {
+                        for spot in cs {
+                            self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                        }
+                    } else {
+                        for spot in &cs {
+                            self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                        }
+                    }
+                    return Err(GoError::OverlappingStones)
+                } else {
+                    let cc = check_capture(&self.stones, space, self.size, color);
+                    match cc {
+                        Ok(rcs) => {
+                            cs = rcs;
+                            for spot in &cs {
+                                self.stones[spot.0 + spot.1 * self.size] = None;
+                            }
+                            if is_self_capture(&mut self.stones, space, self.size, color) {
+                                if color == Color::Black {
+                                    for spot in cs {
+                                        self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                                    }
+                                } else {
+                                    for spot in &cs {
+                                        self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                                    }
+                                }
+                                return Err(GoError::SelfCapture)
+                            }
+                        }
+                        Err(e) => {
+                            if color == Color::Black {
+                                for spot in cs {
+                                    self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                                }
+                            } else {
+                                for spot in &cs {
+                                    self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                                }
+                            }
+                            return Err(e)
+                        }
+                    }
+                }
+            } else {
+                if color == Color::Black {
+                    for spot in cs {
+                        self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                    }
+                } else {
+                    for spot in &cs {
+                        self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                    }
+                }
+                return Err(GoError::OutOfBoard)
+            }
+        } else {
+            if color == Color::Black {
+                for spot in cs {
+                    self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                }
+            } else {
+                for spot in &cs {
+                    self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                }
+            }
+            return Err(GoError::OutOfBoard)
         }
-
+        if color == Color::Black {
+            for spot in cs {
+                self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+            }
+        } else {
+            for spot in &cs {
+                self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+            }
+        }
+        Ok(())
     }
-    fn try_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError> {
-        
+
+    fn try_move(&mut self, color: Color, space: (usize, usize)) -> Result<Color, GoError> {
+        if !space.0 == 0 || !space.1 == 0 {
+            let space = (space.0 - 1, space.1 - 1);
+            if space.0 < self.size && space.1 < self.size {
+                if is_overlaping(&self.stones, space, self.size) {
+                    return Err(GoError::OverlappingStones)
+                } else {
+                    let cc = check_capture(&self.stones, space, self.size, color);
+                    match cc {
+                        Ok(cs) => {
+                            for spot in cs {
+                                self.stones[spot.0 + spot.1 * self.size] = None;
+                            }
+                            if is_self_capture(&mut self.stones, space, self.size, color) {
+                                return Err(GoError::SelfCapture)
+                            } else {
+                                if color == Color::Black {
+                                    self.stones[space.0 + space.1 * self.size] = Some(color);
+                                    return Ok(Color::White)
+                                } else {
+                                    self.stones[space.0 + space.1 * self.size] = Some(color);
+                                    return Ok(Color::Black)
+                                }
+                            }
+                        }
+                        Err(e) => return Err(e)
+                    }
+                }
+            } else {
+                return Err(GoError::OutOfBoard)
+            }
+        } else {
+            return Err(GoError::OutOfBoard)
+        }
     }
 }
-*/
