@@ -150,14 +150,12 @@ pub struct JBoard {
     pub stones: Vec<Option<Color>>,
     pub white_captures: usize,
     pub black_captures: usize,
+    prev_turns: Vec<(Option<Color>, Vec<Option<Color>>, Option<(usize, usize)>)>,
 }
 
 /// Represents all the API-level errors weiqi can throw.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum GoError {
-    // thrown at init
-    /// Thrown when the board size given to init is not 9x9, 13x13, or 19x19
-    InvalidBoardSize,
     // thrown at try_move
     /// Thrown when a requested move would result in Self Capture
     SelfCapture,
@@ -172,6 +170,8 @@ pub enum GoError {
     // thrown at score
     /// Thrown during scoring when a given board state is impossible
     IllegalBoard,
+    /// Thrown in a move violates the ko rule
+    Ko
 }
 
 
@@ -192,8 +192,14 @@ fn is_self_capture(stones: &mut Vec<Option<Color>>, space: (usize, usize), size:
     if let Ok((_, _, liberties)) = build_cluster(stones, space, size) {
         let mut count = liberties.len();
         for lib in liberties {
-            if stones[lib.0 * lib.1 * size] != Some(color) {
-                count -= 1;
+            if color == Color::White {
+                if stones[lib.0 + lib.1 * size] == Some(Color::Black) {
+                    count -= 1;
+                }
+            } else {
+                if stones[lib.0 + lib.1 * size] == Some(Color::White) {
+                    count -= 1;
+                }
             }
         }
         if count == 0 {
@@ -217,7 +223,7 @@ fn check_capture(stones: &Vec<Option<Color>>, space: (usize, usize), size: usize
     let mut tripped = false;
     let mut captured_stones: Vec<(usize, usize)> = Vec::new();
     let mut er: Option<GoError> = None;
-    let (_, _) = check_node(stones, &mut adjacent_nodes, color, space, size, NodeMode::Cap);
+    check_node(stones, &mut adjacent_nodes, color, space, size, NodeMode::Cap);
     for node in adjacent_nodes {
         let r = build_cluster(stones, node, size);
         match r {
@@ -417,61 +423,96 @@ fn build_cluster(stones: &Vec<Option<Color>>, space: (usize, usize), size: usize
     }
 }
 
+/*
+fn check_for_positional_ko() {
+}
+
+fn check_for_situational_ko() {
+}
+*/
+
 /// Base trait for all rulesets to inherent
 pub trait Board: Sized {
-    fn check_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError>;
-    fn init(size: usize) -> Result<Self, GoError>;
-    fn try_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError>;
+    fn check_move(&mut self, color: Color, space: Option<(usize, usize)>) -> Result<(), GoError>;
+    fn init(size: usize) -> Self;
+    fn try_move(&mut self, color: Color, space: Option<(usize, usize)>) -> Result<(), GoError>;
     // fn score(&self) -> Result<(f32, f32), GoError>;
 }
 
 
 impl Board for JBoard {
     /// Builds a blank JBoard
-    fn init(size: usize) -> Result<Self, GoError> {
-        if size != 9 && size != 13 && size != 19 {
-            Err(GoError::InvalidBoardSize)
-        } else {
-            let mut stones: Vec<Option<Color>> = Vec::with_capacity(size * size);
+    fn init(size: usize) -> JBoard {
+        let mut stones: Vec<Option<Color>> = Vec::with_capacity(size * size);
+        for _ in 0..size {
             for _ in 0..size {
-                for _ in 0..size {
-                    stones.push(None)
-                }
+                stones.push(None)
             }
-            Ok(JBoard {
-                size: size,
-                stones: stones,
-                white_captures: 0,
-                black_captures: 0,
-            })
-        }   
+        }
+        let mut b = JBoard {
+            size: size,
+            stones: stones.clone(),
+            white_captures: 0,
+            black_captures: 0,
+            prev_turns: Vec::new(),
+        };
+        b.prev_turns.push((None, stones, None));
+        b
     }
     /// Checks if a move is legal, but does not execute the move
-    fn check_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError> {
-        let mut cs: Vec<(usize, usize)> = Vec::new();
-        if !space.0 == 0 || !space.1 == 0 {
-            let space = (space.0 - 1, space.1 - 1);
-            if space.0 < self.size && space.1 < self.size {
-                if is_overlaping(&self.stones, space, self.size) {
-                    if color == Color::Black {
-                        for spot in cs {
-                            self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
-                        }
-                    } else {
-                        for spot in &cs {
-                            self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
-                        }
-                    }
-                    return Err(GoError::OverlappingStones)
-                } else {
-                    let cc = check_capture(&self.stones, space, self.size, color);
-                    match cc {
-                        Ok(rcs) => {
-                            cs = rcs;
-                            for spot in &cs {
-                                self.stones[spot.0 + spot.1 * self.size] = None;
+    fn check_move(&mut self, color: Color, space: Option<(usize, usize)>) -> Result<(), GoError> {
+        if !space.is_none() {
+            let space = space.unwrap();
+            let mut cs: Vec<(usize, usize)> = Vec::new();
+            if space.0 != 0 && space.1 != 0 {
+                let space = (space.0 - 1, space.1 - 1);
+                if space.0 < self.size && space.1 < self.size {
+                    if is_overlaping(&self.stones, space, self.size) {
+                        if color == Color::Black {
+                            for spot in cs {
+                                self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
                             }
-                            if is_self_capture(&mut self.stones, space, self.size, color) {
+                        } else {
+                            for spot in &cs {
+                                self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                            }
+                        }
+                        return Err(GoError::OverlappingStones)
+                    } else {
+                        let cc = check_capture(&self.stones, space, self.size, color);
+                        match cc {
+                            Ok(rcs) => {
+                                cs = rcs;
+                                for spot in &cs {
+                                    self.stones[spot.0 + spot.1 * self.size] = None;
+                                }
+                                if is_self_capture(&mut self.stones, space, self.size, color) {
+                                    if color == Color::Black {
+                                        for spot in cs {
+                                            self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                                        }
+                                    } else {
+                                        for spot in &cs {
+                                            self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                                        }
+                                    }
+                                    return Err(GoError::SelfCapture)
+                                } else {
+                                    if self.stones == self.prev_turns.last().unwrap().1 && !self.prev_turns.last().unwrap().2.is_none() {
+                                        if color == Color::Black {
+                                            for spot in cs {
+                                                self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                                            }
+                                        } else {
+                                            for spot in &cs {
+                                                self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                                            }
+                                        }
+                                        return Err(GoError::Ko)
+                                    }
+                                }
+                            }
+                            Err(e) => {
                                 if color == Color::Black {
                                     for spot in cs {
                                         self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
@@ -481,22 +522,21 @@ impl Board for JBoard {
                                         self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
                                     }
                                 }
-                                return Err(GoError::SelfCapture)
+                                return Err(e)
                             }
-                        }
-                        Err(e) => {
-                            if color == Color::Black {
-                                for spot in cs {
-                                    self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
-                                }
-                            } else {
-                                for spot in &cs {
-                                    self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
-                                }
-                            }
-                            return Err(e)
                         }
                     }
+                } else {
+                    if color == Color::Black {
+                        for spot in cs {
+                            self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                        }
+                    } else {
+                        for spot in &cs {
+                            self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                        }
+                    }
+                    return Err(GoError::OutOfBoard)
                 }
             } else {
                 if color == Color::Black {
@@ -510,7 +550,6 @@ impl Board for JBoard {
                 }
                 return Err(GoError::OutOfBoard)
             }
-        } else {
             if color == Color::Black {
                 for spot in cs {
                     self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
@@ -520,70 +559,85 @@ impl Board for JBoard {
                     self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
                 }
             }
-            return Err(GoError::OutOfBoard)
-        }
-        if color == Color::Black {
-            for spot in cs {
-                self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
-            }
+            Ok(())
         } else {
-            for spot in &cs {
-                self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
-            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// executes a move, and undoes if if its illegal
-    fn try_move(&mut self, color: Color, space: (usize, usize)) -> Result<(), GoError> {
-        if !space.0 == 0 || !space.1 == 0 {
-            let space = (space.0 - 1, space.1 - 1);
-            if space.0 < self.size && space.1 < self.size {
-                if is_overlaping(&self.stones, space, self.size) {
-                    return Err(GoError::OverlappingStones)
-                } else {
-                    let cc = check_capture(&self.stones, space, self.size, color);
-                    match cc {
-                        Ok(cs) => {
-                            for spot in &cs {
-                                self.stones[spot.0 + spot.1 * self.size] = None;
-                                if color == Color::Black {
-                                    self.black_captures += 1
-                                } else {
-                                    self.white_captures += 1
-                                }
-                            }
-                            if is_self_capture(&mut self.stones, space, self.size, color) {
-                                if color == Color::Black {
-                                    for spot in &cs {
-                                        self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
-                                        self.white_captures -= 1
-                                    }
-                                } else {
-                                    for spot in &cs {
-                                        self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
-                                        self.black_captures -= 1
+    fn try_move(&mut self, color: Color, space: Option<(usize, usize)>) -> Result<(), GoError> {
+        if !space.is_none() {
+            let space = space.unwrap();
+            if space.0 != 0 && !space.1 != 0 {
+                let space = (space.0 - 1, space.1 - 1);
+                if space.0 < self.size && space.1 < self.size {
+                    if is_overlaping(&self.stones, space, self.size) {
+                        return Err(GoError::OverlappingStones)
+                    } else {
+                        let cc = check_capture(&self.stones, space, self.size, color);
+                        match cc {
+                            Ok(cs) => {
+                                for spot in &cs {
+                                    self.stones[spot.0 + spot.1 * self.size] = None;
+                                    if color == Color::Black {
+                                        self.black_captures += 1
+                                    } else {
+                                        self.white_captures += 1
                                     }
                                 }
-                                return Err(GoError::SelfCapture)
-                            } else {
-                                if color == Color::Black {
-                                    self.stones[space.0 + space.1 * self.size] = Some(color);
-                                    Ok(())
+                                if is_self_capture(&mut self.stones, space, self.size, color) {
+                                    if color == Color::Black {
+                                        for spot in &cs {
+                                            self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                                            self.white_captures -= 1
+                                        }
+                                    } else {
+                                        for spot in &cs {
+                                            self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                                            self.black_captures -= 1
+                                        }
+                                    }
+                                    return Err(GoError::SelfCapture)
                                 } else {
-                                    self.stones[space.0 + space.1 * self.size] = Some(color);
-                                    Ok(())
+                                    if !(self.stones == self.prev_turns.last().unwrap().1) {
+                                        if color == Color::Black {
+                                            self.stones[space.0 + space.1 * self.size] = Some(color);
+                                            self.prev_turns.push((Some(color), self.stones.clone(), Some(space)));
+                                            Ok(())
+                                        } else {
+                                            self.stones[space.0 + space.1 * self.size] = Some(color);
+                                            self.prev_turns.push((Some(color), self.stones.clone(), Some(space)));
+                                            Ok(())
+                                        }
+                                    } else {
+                                        if color == Color::Black {
+                                            for spot in &cs {
+                                                self.stones[spot.0 + spot.1 * self.size] = Some(Color::White);
+                                                self.white_captures -= 1
+                                            }
+                                        } else {
+                                            for spot in &cs {
+                                                self.stones[spot.0 + spot.1 * self.size] = Some(Color::Black);
+                                                self.black_captures -= 1
+                                            }
+                                        }
+                                        return Err(GoError::Ko)
+                                    }
                                 }
                             }
+                            Err(e) => return Err(e)
                         }
-                        Err(e) => return Err(e)
                     }
+                } else {
+                    return Err(GoError::OutOfBoard)
                 }
             } else {
                 return Err(GoError::OutOfBoard)
             }
         } else {
-            return Err(GoError::OutOfBoard)
+            self.prev_turns.push((Some(color), self.stones.clone(), None));
+            Ok(())
         }
     }
 }
